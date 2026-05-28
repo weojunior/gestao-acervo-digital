@@ -31,8 +31,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .arquivos import validar_extensao
-from .catalogo import adicionar_documento, listar_documentos
-from .excecoes import BibliotecaError, DocumentoJaExiste
+from .catalogo import (
+    adicionar_documento,
+    buscar_documento,
+    listar_documentos,
+    remover_documento,
+    renomear_documento,
+)
+from .excecoes import (
+    BibliotecaError,
+    DocumentoJaExiste,
+    DocumentoNaoEncontrado,
+)
 
 
 COLUNAS_CSV_OBRIGATORIAS = ("caminho_origem", "titulo", "autor", "ano")
@@ -96,17 +106,17 @@ def _construir_parser() -> argparse.ArgumentParser:
     _registrar(
         sub, "renomear",
         "Renomeia documento e atualiza catálogo.",
-        _nao_implementado,
+        _comando_renomear,
     )
     _registrar(
         sub, "remover",
         "Remove documento do acervo e do catálogo.",
-        _nao_implementado,
+        _comando_remover,
     )
     _registrar(
         sub, "buscar",
         "Exibe os metadados de um documento.",
-        _nao_implementado,
+        _comando_buscar,
     )
     _registrar(
         sub, "listar-tipo",
@@ -386,3 +396,104 @@ def _perguntar_nome_destino(nome_padrao: str) -> str:
         f"Nome do arquivo no acervo (Enter para manter {nome_padrao!r}): "
     ).strip()
     return resposta or nome_padrao
+
+
+def _comando_renomear(args: argparse.Namespace) -> None:
+    """Renomeia documento no acervo e atualiza o catálogo.
+
+    Pergunta o nome atual e o novo nome. Renomeia primeiro o arquivo
+    físico em `acervo/` e depois o registro no catálogo. Se a
+    atualização do catálogo falhar, o nome físico é revertido para
+    preservar a consistência entre disco e catálogo.
+    """
+    print("Renomeação de documento.")
+    print()
+
+    nome_atual = _perguntar_texto(
+        "Nome atual do arquivo: ", obrigatorio=True
+    )
+    caminho_atual = ACERVO_PADRAO / nome_atual
+    if not caminho_atual.is_file():
+        raise DocumentoNaoEncontrado(
+            f"Arquivo {str(caminho_atual)!r} não encontrado no acervo."
+        )
+
+    novo_nome = _perguntar_texto(
+        "Novo nome do arquivo: ", obrigatorio=True
+    )
+    validar_extensao(novo_nome)
+
+    caminho_novo = ACERVO_PADRAO / novo_nome
+    if caminho_novo.exists():
+        raise DocumentoJaExiste(
+            f"Já existe arquivo em {str(caminho_novo)!r}."
+        )
+
+    caminho_atual.rename(caminho_novo)
+    try:
+        registro = renomear_documento(
+            CATALOGO_PADRAO, nome_atual, novo_nome
+        )
+    except BibliotecaError:
+        caminho_novo.rename(caminho_atual)
+        raise
+
+    print()
+    print("Documento renomeado:")
+    _imprimir_registro(registro)
+
+
+def _comando_remover(args: argparse.Namespace) -> None:
+    """Remove documento do acervo e do catálogo.
+
+    Pergunta o nome do arquivo, exibe os metadados atuais e solicita
+    confirmação explícita. A remoção ocorre primeiro no catálogo e
+    depois no sistema de arquivos. Caso o arquivo físico não esteja
+    presente, o registro é removido mesmo assim e o usuário recebe
+    um aviso.
+    """
+    print("Remoção de documento.")
+    print()
+
+    nome = _perguntar_texto("Nome do arquivo: ", obrigatorio=True)
+    registro = buscar_documento(CATALOGO_PADRAO, nome)
+
+    print()
+    print("Registro encontrado:")
+    _imprimir_registro(registro)
+
+    if not _confirmar("Confirma a remoção?"):
+        print("Operação cancelada.")
+        return
+
+    remover_documento(CATALOGO_PADRAO, nome)
+
+    caminho = ACERVO_PADRAO / nome
+    if caminho.is_file():
+        caminho.unlink()
+        print(f"Documento {nome!r} removido com sucesso.")
+    else:
+        print(
+            f"Registro removido. Aviso: arquivo {str(caminho)!r} "
+            f"já não estava presente no acervo."
+        )
+
+
+def _comando_buscar(args: argparse.Namespace) -> None:
+    """Exibe os metadados de um documento do catálogo."""
+    nome = _perguntar_texto("Nome do arquivo: ", obrigatorio=True)
+    registro = buscar_documento(CATALOGO_PADRAO, nome)
+    print()
+    _imprimir_registro(registro)
+
+
+def _confirmar(prompt: str) -> bool:
+    """Pergunta sim/não com default não.
+
+    Retorna True apenas para respostas 's', 'sim' (em qualquer caixa).
+    Qualquer outra resposta, inclusive vazia, retorna False. Essa
+    assimetria torna a confirmação consciente, exigindo entrada
+    afirmativa explícita.
+    """
+    resposta = input(f"{prompt} (s/N): ").strip().lower()
+    return resposta in ("s", "sim")
