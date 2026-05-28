@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .arquivos import validar_extensao
+from .auditoria import auditar_acervo
 from .catalogo import (
     adicionar_documento,
     buscar_documento,
@@ -43,6 +44,7 @@ from .excecoes import (
     DocumentoJaExiste,
     DocumentoNaoEncontrado,
 )
+from .listagens import listar_por_ano, listar_por_tipo
 
 
 COLUNAS_CSV_OBRIGATORIAS = ("caminho_origem", "titulo", "autor", "ano")
@@ -121,17 +123,17 @@ def _construir_parser() -> argparse.ArgumentParser:
     _registrar(
         sub, "listar-tipo",
         "Agrupa registros por tipo de arquivo.",
-        _nao_implementado,
+        _comando_listar_tipo,
     )
     _registrar(
         sub, "listar-ano",
         "Agrupa registros por ano de publicação.",
-        _nao_implementado,
+        _comando_listar_ano,
     )
     _registrar(
         sub, "auditar",
         "Cruza disco e catálogo para detectar divergências.",
-        _nao_implementado,
+        _comando_auditar,
     )
 
     return parser
@@ -497,3 +499,98 @@ def _confirmar(prompt: str) -> bool:
     """
     resposta = input(f"{prompt} (s/N): ").strip().lower()
     return resposta in ("s", "sim")
+
+
+def _comando_listar_tipo(args: argparse.Namespace) -> None:
+    """Lista registros do catálogo agrupados por tipo de arquivo."""
+    grupos = listar_por_tipo(CATALOGO_PADRAO)
+
+    if not grupos:
+        print("O catálogo está vazio.")
+        return
+
+    for tipo, registros in grupos.items():
+        unidade = "documento" if len(registros) == 1 else "documentos"
+        print(f"{tipo} ({len(registros)} {unidade})")
+        for registro in registros:
+            _imprimir_registro(registro)
+
+
+def _comando_listar_ano(args: argparse.Namespace) -> None:
+    """Lista registros do catálogo agrupados por ano de publicação."""
+    grupos = listar_por_ano(CATALOGO_PADRAO)
+
+    if not grupos:
+        print("O catálogo está vazio.")
+        return
+
+    for ano, registros in grupos.items():
+        unidade = "documento" if len(registros) == 1 else "documentos"
+        print(f"{ano} ({len(registros)} {unidade})")
+        for registro in registros:
+            _imprimir_registro(registro)
+
+
+def _comando_auditar(args: argparse.Namespace) -> None:
+    """Cruza acervo físico com catálogo e exibe divergências.
+
+    Apresenta três seções: documentos íntegros, registros sem arquivo
+    no disco e arquivos no disco sem cadastro. Cada seção mostra a
+    contagem e a lista de itens correspondentes.
+    """
+    resultado = auditar_acervo(ACERVO_PADRAO, CATALOGO_PADRAO)
+
+    print("Auditoria do acervo.")
+    print()
+
+    _imprimir_secao_auditoria(
+        titulo="Documentos íntegros",
+        itens=resultado["integros"],
+        formatar=lambda registro: registro["nome_arquivo"],
+        unidade_singular="documento",
+        unidade_plural="documentos",
+    )
+    _imprimir_secao_auditoria(
+        titulo="Cadastros sem arquivo no disco",
+        itens=resultado["nao_encontrados"],
+        formatar=lambda registro: (
+            f"{registro['nome_arquivo']} "
+            f"(título: {registro['titulo']}, autor: {registro['autor']})"
+        ),
+        unidade_singular="documento",
+        unidade_plural="documentos",
+    )
+    _imprimir_secao_auditoria(
+        titulo="Arquivos no disco sem cadastro",
+        itens=resultado["nao_catalogados"],
+        formatar=str,
+        unidade_singular="arquivo",
+        unidade_plural="arquivos",
+    )
+
+
+def _imprimir_secao_auditoria(
+    titulo: str,
+    itens: list,
+    formatar: Callable[[Any], str],
+    unidade_singular: str,
+    unidade_plural: str,
+) -> None:
+    """Imprime uma seção do relatório de auditoria.
+
+    Args:
+        titulo: Cabeçalho da seção.
+        itens: Lista de elementos a exibir.
+        formatar: Função que converte cada elemento em string para
+            impressão.
+        unidade_singular: Palavra usada quando há exatamente um item.
+        unidade_plural: Palavra usada quando há zero ou mais de um.
+    """
+    unidade = unidade_singular if len(itens) == 1 else unidade_plural
+    print(f"{titulo} ({len(itens)} {unidade}):")
+    if not itens:
+        print("  (nenhum)")
+    else:
+        for item in itens:
+            print(f"  - {formatar(item)}")
+    print()
