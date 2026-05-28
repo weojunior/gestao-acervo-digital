@@ -1,0 +1,12 @@
+{
+  "versao": "1.0",
+  "documentos": [
+    {
+      "nome_arquivo": "documento_teste.txt",
+      "titulo": "Documento de Teste",
+      "autor": "Wilson Oliveira Jr",
+      "ano": 2026,
+      "tipo": "TXT"
+    }
+  ]
+}

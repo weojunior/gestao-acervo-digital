@@ -230,6 +230,59 @@ def listar_documentos(caminho_catalogo: str | Path) -> list[dict]:
     return list(catalogo["documentos"])
 
 
+def renomear_documento(
+    caminho_catalogo: str | Path,
+    nome_atual: str,
+    novo_nome: str,
+) -> dict:
+    """Renomeia um documento no catálogo, preservando os demais metadados.
+
+    Atualiza simultaneamente os campos `nome_arquivo` e `tipo`, sendo
+    o segundo recalculado a partir da extensão do novo nome.
+
+    Args:
+        caminho_catalogo: Caminho do arquivo do catálogo.
+        nome_atual: Nome do arquivo atualmente registrado.
+        novo_nome: Novo nome do arquivo, incluindo a extensão.
+
+    Returns:
+        Dicionário do registro com os campos atualizados.
+
+    Raises:
+        FormatoNaoSuportado: Quando a extensão do `novo_nome` não é
+            aceita pelo acervo.
+        DocumentoNaoEncontrado: Quando `nome_atual` não consta no
+            catálogo.
+        DocumentoJaExiste: Quando `novo_nome` já está em uso por outro
+            registro.
+        CatalogoCorrompido: Propagada por `carregar_catalogo`.
+    """
+    validar_extensao(novo_nome)
+    catalogo = carregar_catalogo(caminho_catalogo)
+
+    indice_atual = None
+    for posicao, registro in enumerate(catalogo["documentos"]):
+        if registro["nome_arquivo"] == nome_atual:
+            indice_atual = posicao
+        if (
+            registro["nome_arquivo"] == novo_nome
+            and registro["nome_arquivo"] != nome_atual
+        ):
+            raise DocumentoJaExiste(
+                f"Já existe documento {novo_nome!r} no catálogo."
+            )
+
+    if indice_atual is None:
+        raise DocumentoNaoEncontrado(
+            f"Documento {nome_atual!r} não consta no catálogo."
+        )
+
+    catalogo["documentos"][indice_atual]["nome_arquivo"] = novo_nome
+    catalogo["documentos"][indice_atual]["tipo"] = _tipo_de(novo_nome)
+    salvar_catalogo(caminho_catalogo, catalogo)
+    return catalogo["documentos"][indice_atual]
+
+
 def _validar_metadados(titulo: str, autor: str, ano: int) -> None:
     """Valida os campos editáveis de um registro.
 
