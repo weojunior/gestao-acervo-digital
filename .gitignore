@@ -23,3 +23,8 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Dados do acervo (documentos físicos e catálogo de produção).
+# A pasta é mantida no repositório por meio do placeholder .gitkeep.
+acervo/*
+!acervo/.gitkeep
