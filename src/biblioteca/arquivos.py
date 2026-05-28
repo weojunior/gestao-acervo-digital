@@ -21,7 +21,9 @@ from .excecoes import (
 )
 
 
-EXTENSOES_SUPORTADAS = (".pdf", ".epub", ".txt", ".md", ".docx", ".doc")
+EXTENSOES_SUPORTADAS = (
+    ".pdf", ".epub", ".txt", ".md", ".docx", ".doc", ".odt", ".ods",
+)
 CODIFICACAO_PADRAO = "utf-8"
 
 
