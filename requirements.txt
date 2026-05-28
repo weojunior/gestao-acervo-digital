@@ -1,3 +1,6 @@
 # Dependências do projeto.
-# Novas bibliotecas serão adicionadas conforme as fases avançam.
-# Fase atual: stdlib apenas.
+
+# Núcleo do sistema: apenas biblioteca padrão do Python.
+
+# Testes automatizados.
+pytest>=8.0
