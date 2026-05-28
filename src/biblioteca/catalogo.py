@@ -50,6 +50,8 @@ TIPO_POR_EXTENSAO = {
     ".md": "MD",
     ".docx": "DOCX",
     ".doc": "DOC",
+    ".odt": "ODT",
+    ".ods": "ODS",
 }
 
 
