@@ -25,11 +25,18 @@ exceções.
 """
 
 import argparse
+import csv
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from .catalogo import listar_documentos
-from .excecoes import BibliotecaError
+from .arquivos import validar_extensao
+from .catalogo import adicionar_documento, listar_documentos
+from .excecoes import BibliotecaError, DocumentoJaExiste
+
+
+COLUNAS_CSV_OBRIGATORIAS = ("caminho_origem", "titulo", "autor", "ano")
+COLUNA_CSV_OPCIONAL = "nome_destino"
 
 
 RAIZ_PROJETO = Path(__file__).resolve().parents[2]
@@ -56,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
     except BibliotecaError as erro:
         print(f"erro: {erro}")
         return 1
+    except KeyboardInterrupt:
+        print("\nOperação cancelada pelo usuário.")
+        return 130
 
     return 0
 
@@ -76,12 +86,12 @@ def _construir_parser() -> argparse.ArgumentParser:
     _registrar(
         sub, "adicionar",
         "Cadastra novo documento interativamente.",
-        _nao_implementado,
+        _comando_adicionar,
     )
     _registrar(
         sub, "importar",
         "Importa documentos em lote a partir de arquivo CSV.",
-        _nao_implementado,
+        _comando_importar,
     )
     _registrar(
         sub, "renomear",
@@ -164,3 +174,215 @@ def _imprimir_registro(registro: dict) -> None:
 def _nao_implementado(args: argparse.Namespace) -> None:
     """Stub para comandos a serem implementados em iterações seguintes."""
     print(f"Comando {args.comando!r} ainda não implementado.")
+
+
+def _comando_adicionar(args: argparse.Namespace) -> None:
+    """Cadastro interativo de um novo documento.
+
+    Pergunta o caminho do arquivo de origem, os metadados e o nome
+    final do arquivo no acervo. Copia o arquivo para a pasta
+    `acervo/` e registra os metadados no catálogo. Se a inserção
+    no catálogo falhar após a cópia, a cópia é desfeita para
+    preservar a consistência entre disco e catálogo.
+    """
+    print("Cadastro de novo documento.")
+    print("Pressione Ctrl+C para cancelar a qualquer momento.")
+    print()
+
+    caminho_origem = _perguntar_caminho_existente(
+        "Caminho do arquivo a importar: "
+    )
+    titulo = _perguntar_texto("Título do documento: ", obrigatorio=True)
+    autor = _perguntar_texto("Autor: ", obrigatorio=True)
+    ano = _perguntar_inteiro("Ano de publicação: ")
+    nome_destino = _perguntar_nome_destino(caminho_origem.name)
+
+    validar_extensao(nome_destino)
+
+    caminho_destino = ACERVO_PADRAO / nome_destino
+    if caminho_destino.exists():
+        raise DocumentoJaExiste(
+            f"Já existe arquivo em {str(caminho_destino)!r}."
+        )
+
+    ACERVO_PADRAO.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(caminho_origem, caminho_destino)
+
+    try:
+        registro = adicionar_documento(
+            CATALOGO_PADRAO,
+            nome_arquivo=nome_destino,
+            titulo=titulo,
+            autor=autor,
+            ano=ano,
+        )
+    except BibliotecaError:
+        caminho_destino.unlink()
+        raise
+
+    print()
+    print("Documento cadastrado:")
+    _imprimir_registro(registro)
+
+
+def _comando_importar(args: argparse.Namespace) -> None:
+    """Importa documentos em lote a partir de um arquivo CSV.
+
+    O CSV deve ter cabeçalho com as colunas obrigatórias
+    `caminho_origem`, `titulo`, `autor`, `ano` e a coluna opcional
+    `nome_destino`. Cada linha é processada de forma independente.
+    Falhas em uma linha não interrompem o processamento das demais e
+    são reportadas individualmente ao usuário.
+    """
+    print("Importação em lote a partir de CSV.")
+    print()
+
+    caminho_csv = _perguntar_caminho_existente("Caminho do arquivo CSV: ")
+    sucessos = 0
+    falhas = 0
+
+    with open(caminho_csv, newline="", encoding="utf-8") as arquivo:
+        leitor = csv.DictReader(arquivo)
+        _validar_colunas_csv(leitor.fieldnames or [])
+
+        ACERVO_PADRAO.mkdir(parents=True, exist_ok=True)
+
+        # A enumeração começa em 2 porque a linha 1 do arquivo é o
+        # cabeçalho consumido pelo DictReader.
+        for numero_linha, linha in enumerate(leitor, start=2):
+            try:
+                nome = _importar_linha(linha)
+                sucessos += 1
+                print(f"  linha {numero_linha}: {nome} importado.")
+            except (BibliotecaError, FileNotFoundError, ValueError) as erro:
+                falhas += 1
+                print(f"  linha {numero_linha}: erro - {erro}")
+
+    print()
+    print(f"Importação concluída: {sucessos} sucesso(s), {falhas} falha(s).")
+
+
+def _importar_linha(linha: dict) -> str:
+    """Processa uma linha do CSV: copia o arquivo e registra no catálogo.
+
+    Args:
+        linha: Dicionário com as colunas obrigatórias e, opcionalmente,
+            `nome_destino`.
+
+    Returns:
+        Nome final do arquivo no acervo.
+
+    Raises:
+        FileNotFoundError: Quando o caminho de origem não existe.
+        ValueError: Quando o ano não pode ser convertido para int.
+        BibliotecaError: Propagada das funções de catálogo.
+    """
+    caminho_origem = Path(linha["caminho_origem"].strip()).expanduser()
+    if not caminho_origem.is_file():
+        raise FileNotFoundError(
+            f"Arquivo {str(caminho_origem)!r} não encontrado."
+        )
+
+    valor_nome_destino = (linha.get(COLUNA_CSV_OPCIONAL) or "").strip()
+    nome_destino = valor_nome_destino or caminho_origem.name
+
+    titulo = linha["titulo"].strip()
+    autor = linha["autor"].strip()
+    ano = int(linha["ano"].strip())
+
+    validar_extensao(nome_destino)
+
+    caminho_destino = ACERVO_PADRAO / nome_destino
+    if caminho_destino.exists():
+        raise DocumentoJaExiste(
+            f"Já existe arquivo em {str(caminho_destino)!r}."
+        )
+
+    shutil.copy2(caminho_origem, caminho_destino)
+
+    try:
+        adicionar_documento(
+            CATALOGO_PADRAO,
+            nome_arquivo=nome_destino,
+            titulo=titulo,
+            autor=autor,
+            ano=ano,
+        )
+    except BibliotecaError:
+        caminho_destino.unlink()
+        raise
+
+    return nome_destino
+
+
+def _validar_colunas_csv(colunas: list[str]) -> None:
+    """Verifica que o CSV traz todas as colunas obrigatórias.
+
+    Raises:
+        ValueError: Quando alguma coluna obrigatória está ausente.
+    """
+    faltantes = [c for c in COLUNAS_CSV_OBRIGATORIAS if c not in colunas]
+    if faltantes:
+        raise ValueError(
+            f"CSV não tem as colunas obrigatórias: {faltantes}. "
+            f"Colunas esperadas: "
+            f"{COLUNAS_CSV_OBRIGATORIAS + (COLUNA_CSV_OPCIONAL,)}."
+        )
+
+
+def _perguntar_caminho_existente(prompt: str) -> Path:
+    """Pede um caminho de arquivo existente, repetindo em caso de erro.
+
+    Aceita `~` no início do caminho, expandindo para o diretório do
+    usuário. Retorna apenas quando o caminho aponta para um arquivo
+    válido.
+    """
+    while True:
+        resposta = input(prompt).strip()
+        if not resposta:
+            print("Caminho não pode estar em branco.")
+            continue
+
+        caminho = Path(resposta).expanduser()
+        if not caminho.is_file():
+            print(f"Arquivo {str(caminho)!r} não encontrado.")
+            continue
+
+        return caminho
+
+
+def _perguntar_texto(prompt: str, obrigatorio: bool = False) -> str:
+    """Pede uma resposta textual.
+
+    Args:
+        prompt: Texto exibido ao usuário.
+        obrigatorio: Quando True, repete a pergunta até obter resposta
+            não vazia.
+    """
+    while True:
+        resposta = input(prompt).strip()
+        if resposta or not obrigatorio:
+            return resposta
+        print("Resposta não pode estar em branco.")
+
+
+def _perguntar_inteiro(prompt: str) -> int:
+    """Pede um inteiro, repetindo em caso de entrada inválida."""
+    while True:
+        resposta = input(prompt).strip()
+        try:
+            return int(resposta)
+        except ValueError:
+            print(f"Valor {resposta!r} não é um inteiro válido.")
+
+
+def _perguntar_nome_destino(nome_padrao: str) -> str:
+    """Pede o nome final do arquivo no acervo.
+
+    Em resposta vazia, devolve o `nome_padrao` (geralmente o nome
+    original do arquivo).
+    """
+    resposta = input(
+        f"Nome do arquivo no acervo (Enter para manter {nome_padrao!r}): "
+    ).strip()
+    return resposta or nome_padrao
